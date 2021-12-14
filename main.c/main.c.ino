@@ -116,7 +116,7 @@ void setup() {
   pinMode(A0, INPUT); //Optional trimpot for analog station control
  
   Serial.begin(57600);
-  Serial.println();
+  Serial.println("");
  
   si4703_init(); //Init the Si4703 - we need to toggle SDIO before Wire.begin takes over.
  
@@ -126,11 +126,11 @@ void loop() {
   char option;
   char vol = 15;
   int currentChannel = 973; //Default the unit to a known good local radio station
- 
+  //int currentChannel = 899; //FRANCE INTER
   gotoChannel(currentChannel);
  
   while(1) {
-    Serial.println();
+    Serial.println("");
     Serial.println("Si4703 Configuration");
  
     currentChannel = readChannel();
@@ -153,14 +153,15 @@ void loop() {
     Serial.println("v) Volume");
     Serial.println("w) Tune up");
     Serial.println("s) Tune down");
-    Serial.print(": ");
+    Serial.println(": ");
  
     while (!Serial.available());
     option = Serial.read();
  
     if(option == '1')  {
       Serial.println("Tune to 97.3");
-      currentChannel = 973;
+      currentChannel = 97.3;
+      //currentChannel = 89.9;
       //currentChannel = 1023;
       gotoChannel(currentChannel);
     }
@@ -173,37 +174,37 @@ void loop() {
     else if(option == '3') {
       si4703_readRegisters();
  
-      Serial.println();
+      Serial.println("");
       Serial.println("Radio Status:");
  
       if(si4703_registers[STATUSRSSI] & (1<<RDSR)){
-        Serial.print(" (RDS Available)");
+        Serial.println(" (RDS Available)");
  
         byte blockerrors = (si4703_registers[STATUSRSSI] & 0x0600) >> 9; //Mask in BLERA
-        if(blockerrors == 0) Serial.print (" (No RDS errors)");
-        if(blockerrors == 1) Serial.print (" (1-2 RDS errors)");
-        if(blockerrors == 2) Serial.print (" (3-5 RDS errors)");
-        if(blockerrors == 3) Serial.print (" (6+ RDS errors)");
+        if(blockerrors == 0) Serial.println (" (No RDS errors)");
+        if(blockerrors == 1) Serial.println (" (1-2 RDS errors)");
+        if(blockerrors == 2) Serial.println (" (3-5 RDS errors)");
+        if(blockerrors == 3) Serial.println (" (6+ RDS errors)");
       }
       else
-        Serial.print(" (No RDS)");
+        Serial.println(" (No RDS)");
  
-      if(si4703_registers[STATUSRSSI] & (1<<STC)) Serial.print(" (Tune Complete)");
+      if(si4703_registers[STATUSRSSI] & (1<<STC)) Serial.println(" (Tune Complete)");
       if(si4703_registers[STATUSRSSI] & (1<<SFBL)) 
-        Serial.print(" (Seek Fail)");
+        Serial.println(" (Seek Fail)");
       else
-        Serial.print(" (Seek Successful!)");
-      if(si4703_registers[STATUSRSSI] & (1<<AFCRL)) Serial.print(" (AFC/Invalid Channel)");
-      if(si4703_registers[STATUSRSSI] & (1<<RDSS)) Serial.print(" (RDS Synch)");
+        Serial.println(" (Seek Successful!)");
+      if(si4703_registers[STATUSRSSI] & (1<<AFCRL)) Serial.println(" (AFC/Invalid Channel)");
+      if(si4703_registers[STATUSRSSI] & (1<<RDSS)) Serial.println(" (RDS Synch)");
  
       if(si4703_registers[STATUSRSSI] & (1<<STEREO)) 
-        Serial.print(" (Stereo!)");
+        Serial.println(" (Stereo!)");
       else
-        Serial.print(" (Mono)");
+        Serial.println(" (Mono)");
  
       byte rssi = si4703_registers[STATUSRSSI] & 0x00FF; //Mask in RSSI
-      Serial.print(" (RSSI=");
-      Serial.print(rssi, DEC);
+      Serial.println(" (RSSI=");
+      Serial.println(rssi, DEC);
       Serial.println(" of 75)");
     }
     else if(option == '4') {
@@ -234,15 +235,15 @@ void loop() {
           Dh = (si4703_registers[RDSD] & 0xFF00) >> 8;
           Dl = (si4703_registers[RDSD] & 0x00FF);
  
-          Serial.print("RDS: ");
-          Serial.print(Ah);
-          Serial.print(Al);
-          Serial.print(Bh);
-          Serial.print(Bl);
-          Serial.print(Ch);
-          Serial.print(Cl);
-          Serial.print(Dh);
-          Serial.print(Dl);
+          Serial.println("RDS: ");
+          Serial.println(Ah);
+          Serial.println(Al);
+          Serial.println(Bh);
+          Serial.println(Bl);
+          Serial.println(Ch);
+          Serial.println(Cl);
+          Serial.println(Dh);
+          Serial.println(Dl);
           Serial.println(" !");
  
           delay(40); //Wait for the RDS bit to clear
@@ -279,10 +280,10 @@ void loop() {
           trimpot += analogRead(A0);
         trimpot /= 16; //Take average of trimpot reading
  
-        Serial.print("Trim: ");
-        Serial.print(trimpot);
+        Serial.println("Trim: ");
+        Serial.println(trimpot);
         trimpot = map(trimpot, 0, 1023, 875, 1079); //Convert the trimpot value to a valid station
-        Serial.print(" station: ");
+        Serial.println(" station: ");
         Serial.println(trimpot);
         if(trimpot != currentChannel) {
           currentChannel = trimpot;
@@ -296,7 +297,7 @@ void loop() {
  
       byte current_vol;
  
-      Serial.println();
+      Serial.println("");
       Serial.println("Volume:");
       Serial.println("+) Up");
       Serial.println("-) Down");
@@ -311,7 +312,7 @@ void loop() {
             si4703_registers[SYSCONFIG2] &= 0xFFF0; //Clear volume bits
             si4703_registers[SYSCONFIG2] |= current_vol; //Set new volume
             si4703_updateRegisters(); //Update
-            Serial.print("Volume: ");
+            Serial.println("Volume: ");
             Serial.println(current_vol, DEC);
           }
           if(option == '-') {
@@ -321,7 +322,7 @@ void loop() {
             si4703_registers[SYSCONFIG2] &= 0xFFF0; //Clear volume bits
             si4703_registers[SYSCONFIG2] |= current_vol; //Set new volume
             si4703_updateRegisters(); //Update
-            Serial.print("Volume: ");
+            Serial.println("Volume: ");
             Serial.println(current_vol, DEC);
           }
           else if(option == 'x') break;
@@ -348,7 +349,7 @@ void loop() {
       gotoChannel(currentChannel);
     }
     else {
-      Serial.print("Choice = ");
+      Serial.println("Choice = ");
       Serial.println(option);
     }
   }
@@ -442,7 +443,7 @@ byte seek(byte seekDirection){
     si4703_readRegisters();
     if((si4703_registers[STATUSRSSI] & (1<<STC)) != 0) break; //Tuning complete!
  
-    Serial.print("Trying station:");
+    Serial.println("Trying station:");
     Serial.println(readChannel());
   }
  
@@ -529,7 +530,7 @@ byte si4703_updateRegisters(void) {
   //End this transmission
   byte ack = Wire.endTransmission();
   if(ack != 0) { //We have a problem! 
-    Serial.print("Write Fail:"); //No ACK!
+    Serial.println("Write Fail:"); //No ACK!
     Serial.println(ack, DEC); //I2C error: 0 = success, 1 = data too long, 2 = rx NACK on address, 3 = rx NACK on data, 4 = other error
     return(FAIL);
   }
