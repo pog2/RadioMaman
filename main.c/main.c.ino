@@ -46,6 +46,13 @@
   
  The Si4703 breakout does work with line out into a stereo or other amplifier. Be sure to test with different length 3.5mm
  cables. Too short of a cable may degrade reception.
+
+
+ Ajout Pierre
+
+ * Entrée Analog : A0 -> Volume A1 -> Selection Station
+
+ 
  */
  
 #include <Wire.h>
@@ -107,11 +114,160 @@ uint16_t si4703_registers[16]; //There are 16 registers, each 16 bits large
 #define AFCRL  12
 #define RDSS  11
 #define STEREO  8
- 
- 
+
 #define IN_EUROPE 1 // <- europe power !
- 
+
+//#define DEBUG 
+// Gestion des controles ( volume & stations)
+#define DELAY_MEAS_MS 50
+#define NB_MEAS_SMOOTH 30
+#define FLOAT_PRECISION 0.1
+
+typedef struct 
+{
+  float val;
+  float lastVal;
+} voltage;
+
+float sensorToVoltage(int sensorValue)
+{
+  float voltage = sensorValue * (5.0 / 1023.0);
+  return voltage;
+}
+
+void printVoltages(float voltage0, float voltage1)
+{
+  Serial.print("A0: ");
+  Serial.print(voltage0);
+  Serial.print(" A1: ");
+  Serial.print(voltage1);
+  Serial.print("\n"); 
+}
+
+int hasChanged(void *pData, float precision)
+{
+  // Return true if voltage has changed 
+  int flag;
+  float diff;
+  voltage *pVolt0 = (voltage *)pData;
+  diff = pVolt0->val - pVolt0->lastVal;
+  diff = (diff>0) ? diff : -diff; // abs(diff); 
+  #ifdef DEBUG 
+  Serial.print("[hasChanged] diff=]");
+  Serial.print(diff);
+  
+  #endif 
+  flag = ( diff > precision ) ? 1 : 0;
+  return flag; 
+}
+
+void updateVoltage(void *pData)
+{
+  // Store val in lastValue for next measure
+  voltage *pVolt0 = (voltage *)pData;
+  pVolt0->lastVal = pVolt0->val;
+}
+
+void initVoltage(void *pData)
+{
+  memset(pData, 0, sizeof(voltage));
+}
+
+int analogReadAverage(int potPin)
+{
+  // Read Analog input and smooth it
+  long int val = 0;
+  for (int i=0; i< NB_MEAS_SMOOTH ; i++)
+  {
+    val += analogRead(potPin); 
+#ifdef DEBUG
+    Serial.print("[analogReadAverage]val:");
+    Serial.print(val);
+    Serial.print("\n");
+#endif
+  }  
+  val /= NB_MEAS_SMOOTH;
+#ifdef DEBUG  
+  Serial.print("[analogReadAverage]valMean:");
+  Serial.print(val);
+  Serial.print("\n");
+  delay(1500);
+#endif
+  return val ;
+}
+
+void IncreaseVolume()
+{
+  byte current_vol;
+  si4703_readRegisters(); //Read the current register set
+  current_vol = si4703_registers[SYSCONFIG2] & 0x000F; //Read the current volume level
+  if(current_vol < 16) current_vol++; //Limit max volume to 0x000F
+  si4703_registers[SYSCONFIG2] &= 0xFFF0; //Clear volume bits
+  si4703_registers[SYSCONFIG2] |= current_vol; //Set new volume
+  si4703_updateRegisters(); //Update
+  Serial.println("Volume: ");
+  Serial.println(current_vol, DEC);
+}
+void DecreaseVolume()
+{
+    byte current_vol;
+    si4703_readRegisters(); //Read the current register set
+    current_vol = si4703_registers[SYSCONFIG2] & 0x000F; //Read the current volume level
+    if(current_vol > 0) current_vol--; //You can't go lower than zero
+    si4703_registers[SYSCONFIG2] &= 0xFFF0; //Clear volume bits
+    si4703_registers[SYSCONFIG2] |= current_vol; //Set new volume
+    si4703_updateRegisters(); //Update
+    Serial.println("Volume: ");
+    Serial.println(current_vol, DEC);
+}
+// set volume to given volStep
+void SetVolumeStep( byte volStep)
+{
+    si4703_readRegisters(); //Read the current register set
+    //current_vol = si4703_registers[SYSCONFIG2] & 0x000F; //Read the current volume level
+    if(volStep < 0 || volStep > 16)
+    {
+      Serial.println("[SetVolumeStep] Error: Wrong Volume Step (");
+      Serial.print(volStep, DEC); 
+      Serial.print(")");
+      return;
+    }
+    else 
+    {
+        Serial.println("Set Volume to VolStep: ");
+        Serial.print(volStep, DEC); 
+        si4703_registers[SYSCONFIG2] &= 0xFFF0; //Clear volume bits
+        si4703_registers[SYSCONFIG2] |= volStep; //Set new volume
+        si4703_updateRegisters(); //Update
+    }
+}
+// return volume step € [0,16] from voltage €+/- [0V, 5V]
+int VoltageToVolumeStep( float voltage, byte *pVolStep)
+{
+    if(pVolStep == NULL)
+    {
+      Serial.println("[VoltageToVolumeStep] Null Pointer error");
+      return -1;  
+    }
+    else
+    {      
+      *pVolStep = (int) (voltage / 5.0 * 16.0);  
+      Serial.print("[VoltageToVolumeStep] voltage: computed volStep: ");
+      Serial.print(voltage);
+      Serial.print(*pVolStep, DEC); 
+      return 0;
+    }
+}
+
+// A0 -> voltage0 : Station 
+// A1 -> voltage1 : Volume
+voltage voltage0; 
+voltage voltage1; 
+
+
 void setup() {                
+  initVoltage(&voltage0);
+  initVoltage(&voltage1);
   pinMode(13, OUTPUT);
   pinMode(A0, INPUT); //Optional trimpot for analog station control
  
@@ -125,10 +281,14 @@ void setup() {
 void loop() {
   char option;
   char vol = 15;
-  int currentChannel = 973; //Default the unit to a known good local radio station
-  //int currentChannel = 899; //FRANCE INTER
+  //int currentChannel = 973; //Default the unit to a known good local radio station
+  int currentChannel = 898; //FRANCE INTER
   gotoChannel(currentChannel);
- 
+  // Analog inputs 
+  int flag0 =0;
+  int flag1= 0;
+  int sensorValue0, sensorValue1; 
+  
   while(1) {
     Serial.println("");
     Serial.println("Si4703 Configuration");
@@ -141,7 +301,7 @@ void loop() {
     Serial.println("Configured for European Radio");
 #endif
  
-    Serial.println("1) Tune to 97.3");
+    Serial.println("1) Tune to France inter 89.8");
     Serial.println("2) Mute On/Off");
     Serial.println("3) Display status");
     Serial.println("4) Seek up");
@@ -150,18 +310,78 @@ void loop() {
     Serial.println("r) Print registers");
     Serial.println("8) Turn GPIO1 High");
     Serial.println("9) Turn GPIO1 Low");
+    Serial.println("A) <Freq>");
     Serial.println("v) Volume");
     Serial.println("w) Tune up");
     Serial.println("s) Tune down");
     Serial.println(": ");
  
-    while (!Serial.available());
-    option = Serial.read();
- 
+    /*while (!Serial.available());
+    option = Serial.read();*/
+
+   char inData[10]; // Or whatever size you need
+   byte index = 0;
+
+  // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V)(10bits)
+  // 0xfffc = 0xff | 0b11111100 => filter less 2 significant bit (bad ass noise reduction)
+  // 0xfff0 = 0xff | 0b11110000 => filter less 4 significant bit (bad ass noise reduction)
+   int filter = 0xFFFC;
+   while(!Serial.available() && !flag0 && !flag1)
+  {
+      sensorValue0 = analogReadAverage(A0);
+      sensorValue1 = analogReadAverage(A1);
+
+      voltage0.val = sensorToVoltage(sensorValue0 & filter); 
+      voltage1.val = sensorToVoltage(sensorValue1 & filter);
+      
+      flag0 = hasChanged(&voltage0, FLOAT_PRECISION);
+      flag1 = hasChanged(&voltage1, FLOAT_PRECISION);
+#ifdef DEBUG 
+      Serial.print("flag0: ");
+      Serial.print(flag0);
+      printVoltages(voltage0.val, voltage1.val);
+      delay(5000);
+#endif
+      updateVoltage(&voltage0);
+      updateVoltage(&voltage1); 
+      delay(DELAY_MEAS_MS);
+      
+  } // wait button changes or Serial cmd
+
+   
+   while(Serial.available()) // store cmd
+   {
+      char aChar = Serial.read();
+      Serial.println("Meu");
+      inData[index] = aChar; // Add the character to the array
+      index++;   // Point to the next position
+      inData[index] = '\0'; // NULL terminate the array
+      sprintf(printBuffer, "YOLO %c", aChar);
+      Serial.println(printBuffer);
+      option =  inData[0];
+   }
+   
+   if (flag0)
+   {
+      Serial.print("[A0 CHANGED]");
+      printVoltages(voltage0.val, voltage1.val);
+      delay(500);
+   }
+    if (flag1)
+   {
+      Serial.print("[A1 CHANGED / VOL Changed]");      
+      printVoltages(voltage0.val, voltage1.val);
+      // Go in Volume config
+      option = 'v';
+      delay(500);
+   }
+
+//    }
+
     if(option == '1')  {
-      Serial.println("Tune to 97.3");
-      currentChannel = 97.3;
-      //currentChannel = 89.9;
+      Serial.println("Tune to 89.9");
+      //currentChannel = 97.3;
+      currentChannel = 898; //89.8 MHz
       //currentChannel = 1023;
       gotoChannel(currentChannel);
     }
@@ -294,40 +514,40 @@ void loop() {
       }
     }
     else if(option == 'v') {
- 
-      byte current_vol;
- 
-      Serial.println("");
-      Serial.println("Volume:");
-      Serial.println("+) Up");
-      Serial.println("-) Down");
-      Serial.println("x) Exit");
-      while(1){
-        if(Serial.available()){
-          option = Serial.read();
-          if(option == '+') {
-            si4703_readRegisters(); //Read the current register set
-            current_vol = si4703_registers[SYSCONFIG2] & 0x000F; //Read the current volume level
-            if(current_vol < 16) current_vol++; //Limit max volume to 0x000F
-            si4703_registers[SYSCONFIG2] &= 0xFFF0; //Clear volume bits
-            si4703_registers[SYSCONFIG2] |= current_vol; //Set new volume
-            si4703_updateRegisters(); //Update
-            Serial.println("Volume: ");
-            Serial.println(current_vol, DEC);
+
+      if (flag1)
+      {
+        // Volume change from A1 potentiometer
+        byte volumeStep;
+        int err = VoltageToVolumeStep(voltage1.val, &volumeStep);
+        if (err == 0)
+        {
+          SetVolumeStep(volumeStep);
+        }        
+      }
+      else
+      {
+        // Volume change from v Serial command
+        Serial.println("");
+        Serial.println("Volume:");
+        Serial.println("+) Up");
+        Serial.println("-) Down");
+        Serial.println("x) Exit");
+        while(1){
+          if(Serial.available()){
+            option = Serial.read();
+            if(option == '+') {
+                IncreaseVolume();
+            }
+            if(option == '-') {
+                DecreaseVolume();
+            }
+            else if(option == 'x') break;
           }
-          if(option == '-') {
-            si4703_readRegisters(); //Read the current register set
-            current_vol = si4703_registers[SYSCONFIG2] & 0x000F; //Read the current volume level
-            if(current_vol > 0) current_vol--; //You can't go lower than zero
-            si4703_registers[SYSCONFIG2] &= 0xFFF0; //Clear volume bits
-            si4703_registers[SYSCONFIG2] |= current_vol; //Set new volume
-            si4703_updateRegisters(); //Update
-            Serial.println("Volume: ");
-            Serial.println(current_vol, DEC);
-          }
-          else if(option == 'x') break;
         }
       }
+ 
+
     }
  
     else if(option == 'w') {
@@ -352,6 +572,10 @@ void loop() {
       Serial.println("Choice = ");
       Serial.println(option);
     }
+    // re-init 
+    option = '0';
+    flag0 = flag1 = 0;   
+   
   }
 }
  
