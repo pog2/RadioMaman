@@ -116,7 +116,9 @@ uint16_t si4703_registers[16]; //There are 16 registers, each 16 bits large
 #define STEREO  8
 
 #define IN_EUROPE 1 // <- europe power !
-
+//#define FRANCE_INTER_FREQ 994
+#define FRANCE_INTER_FREQ 897 // France inter Bouliac
+ 
 //#define DEBUG 
 // Gestion des controles ( volume & stations)
 #define DELAY_MEAS_MS 50
@@ -144,20 +146,26 @@ void printVoltages(float voltage0, float voltage1)
   Serial.print("\n"); 
 }
 
-int hasChanged(void *pData, float precision)
+int hasChanged(void *pData, float precision, float *pDiff)
 {
   // Return true if voltage has changed 
   int flag;
   float diff;
+  float absDiff;
   voltage *pVolt0 = (voltage *)pData;
   diff = pVolt0->val - pVolt0->lastVal;
-  diff = (diff>0) ? diff : -diff; // abs(diff); 
+  absDiff = (diff>0) ? diff : -diff; // abs(diff); 
   #ifdef DEBUG 
   Serial.print("[hasChanged] diff=]");
   Serial.print(diff);
   
   #endif 
-  flag = ( diff > precision ) ? 1 : 0;
+  flag = ( absDiff > precision ) ? 1 : 0;
+  if (pDiff != NULL)
+  {
+    *pDiff = diff;  
+  }
+
   return flag; 
 }
 
@@ -259,18 +267,21 @@ int VoltageToVolumeStep( float voltage, byte *pVolStep)
     }
 }
 
-// A0 -> voltage0 : Station 
+// A0 -> voltage0 : unused
 // A1 -> voltage1 : Volume
 voltage voltage0; 
 voltage voltage1; 
 
+#define RESET_INPUT_PIN 7
+void(* resetFunc) (void) = 0;
 
 void setup() {                
   initVoltage(&voltage0);
   initVoltage(&voltage1);
   pinMode(13, OUTPUT);
   pinMode(A0, INPUT); //Optional trimpot for analog station control
- 
+  pinMode(RESET_INPUT_PIN, INPUT_PULLUP); // Entrée ON/OFF
+  
   Serial.begin(57600);
   Serial.println("");
  
@@ -279,15 +290,22 @@ void setup() {
 }
  
 void loop() {
+
+wait_state:
+while( digitalRead(RESET_INPUT_PIN) == HIGH)
+{
+  //Serial.println("WAiting state");
+  //delay(5); 
+}
+  
   char option;
   char vol = 15;
   //int currentChannel = 973; //Default the unit to a known good local radio station
-  int currentChannel = 898; //FRANCE INTER
+  int currentChannel = FRANCE_INTER_FREQ; //FRANCE INTER  
   gotoChannel(currentChannel);
   // Analog inputs 
-  int flag0 =0;
   int flag1= 0;
-  int sensorValue0, sensorValue1; 
+  int sensorValue1; 
   
   while(1) {
     Serial.println("");
@@ -301,7 +319,7 @@ void loop() {
     Serial.println("Configured for European Radio");
 #endif
  
-    Serial.println("1) Tune to France inter 89.8");
+    Serial.println("1) Tune to France inter");
     Serial.println("2) Mute On/Off");
     Serial.println("3) Display status");
     Serial.println("4) Seek up");
@@ -326,50 +344,44 @@ void loop() {
   // 0xfffc = 0xff | 0b11111100 => filter less 2 significant bit (bad ass noise reduction)
   // 0xfff0 = 0xff | 0b11110000 => filter less 4 significant bit (bad ass noise reduction)
    int filter = 0xFFFC;
-   while(!Serial.available() && !flag0 && !flag1)
+   while(!Serial.available() && !flag1)
   {
-      sensorValue0 = analogReadAverage(A0);
       sensorValue1 = analogReadAverage(A1);
-
-      voltage0.val = sensorToVoltage(sensorValue0 & filter); 
-      voltage1.val = sensorToVoltage(sensorValue1 & filter);
+      voltage1.val = sensorToVoltage(sensorValue1 & filter);        
+      flag1 = hasChanged(&voltage1, FLOAT_PRECISION, NULL);
       
-      flag0 = hasChanged(&voltage0, FLOAT_PRECISION);
-      flag1 = hasChanged(&voltage1, FLOAT_PRECISION);
 #ifdef DEBUG 
       Serial.print("flag0: ");
       Serial.print(flag0);
       printVoltages(voltage0.val, voltage1.val);
       delay(5000);
 #endif
-      updateVoltage(&voltage0);
       updateVoltage(&voltage1); 
+      // Check On/Off state
+      if(digitalRead(RESET_INPUT_PIN) == HIGH)
+      {
+        Serial.println("Will close");
+        delay(500);
+        resetFunc();
+        goto wait_state;
+      }
       delay(DELAY_MEAS_MS);
       
   } // wait button changes or Serial cmd
-
-   
+  
    while(Serial.available()) // store cmd
    {
       char aChar = Serial.read();
-      Serial.println("Meu");
       inData[index] = aChar; // Add the character to the array
       index++;   // Point to the next position
       inData[index] = '\0'; // NULL terminate the array
-      sprintf(printBuffer, "YOLO %c", aChar);
       Serial.println(printBuffer);
       option =  inData[0];
    }
-   
-   if (flag0)
+
+  if (flag1)
    {
-      Serial.print("[A0 CHANGED]");
-      printVoltages(voltage0.val, voltage1.val);
-      delay(500);
-   }
-    if (flag1)
-   {
-      Serial.print("[A1 CHANGED / VOL Changed]");      
+      Serial.print("[A1, VOL Changed]");      
       printVoltages(voltage0.val, voltage1.val);
       // Go in Volume config
       option = 'v';
@@ -379,10 +391,9 @@ void loop() {
 //    }
 
     if(option == '1')  {
-      Serial.println("Tune to 89.9");
-      //currentChannel = 97.3;
-      currentChannel = 898; //89.8 MHz
-      //currentChannel = 1023;
+      Serial.print("Tune to ");
+      Serial.print(FRANCE_INTER_FREQ);
+      currentChannel = FRANCE_INTER_FREQ;
       gotoChannel(currentChannel);
     }
     else if(option == '2') {
@@ -513,20 +524,21 @@ void loop() {
         delay(100);
       }
     }
-    else if(option == 'v') {
-
+    else if(option == 'v') 
+    {
       if (flag1)
       {
-        // Volume change from A1 potentiometer
-        byte volumeStep;
-        int err = VoltageToVolumeStep(voltage1.val, &volumeStep);
-        if (err == 0)
-        {
-          SetVolumeStep(volumeStep);
-        }        
-      }
-      else
-      {
+         // Volume change from A1 potentiometer
+         byte volumeStep;
+         int err = VoltageToVolumeStep(voltage1.val, &volumeStep);
+         if (err == 0)
+         {
+           SetVolumeStep(volumeStep);
+         }
+       }
+       else
+       {
+
         // Volume change from v Serial command
         Serial.println("");
         Serial.println("Volume:");
@@ -546,10 +558,7 @@ void loop() {
           }
         }
       }
- 
-
     }
- 
     else if(option == 'w') {
       currentChannel = readChannel();
 #ifdef IN_EUROPE
@@ -574,8 +583,7 @@ void loop() {
     }
     // re-init 
     option = '0';
-    flag0 = flag1 = 0;   
-   
+    flag1 = 0;
   }
 }
  
